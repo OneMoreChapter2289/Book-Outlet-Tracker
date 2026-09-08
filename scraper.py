@@ -3,8 +3,8 @@ from bs4 import BeautifulSoup
 import json
 import os
 
+# Updated to use Book Outlet's direct, default US region catalog link
 TARGET_URL = "https://bookoutlet.com"
-# This pulls your hidden Discord URL from GitHub's settings
 DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL") 
 CACHE_FILE = "stored_books.txt"
 
@@ -19,9 +19,17 @@ def save_new_inventory(seen_set):
         f.write("\n".join(seen_set))
 
 def scrape_book_outlet():
-    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+    # Enriched headers to mimic a normal browser request completely
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Referer": "https://bookoutlet.com/"
+    }
+    
     try:
         response = requests.get(TARGET_URL, headers=headers)
+        print(f"[DEBUG] Website responded with status code: {response.status_code}")
+        
         if response.status_code != 200:
             return
             
@@ -29,15 +37,19 @@ def scrape_book_outlet():
         already_seen = get_already_seen()
         new_books = []
         
-        # Pulls the first 20 books available on the page grid
-        book_elements = soup.find_all("div", class_="product-card")[:20] 
+        # Broadened selectors to catch any alternative grid tags Book Outlet uses
+        book_elements = soup.find_all("div", class_="product-card") or soup.find_all("div", class_="grid-item")
+        print(f"[DEBUG] Total items found on page grid: {len(book_elements)}")
         
         for book in book_elements:
             try:
-                title_tag = book.find("h3", class_="product-card__title") or book.find("div", class_="title")
+                title_tag = book.find("h3", class_="product-card__title") or book.find("div", class_="title") or book.find("h3")
                 link_tag = book.find("a", href=True)
                 price_tag = book.find("span", class_="product-card__price") or book.find("span", class_="price")
                 
+                if not title_tag or not link_tag:
+                    continue
+                    
                 title = title_tag.text.strip()
                 book_url = "https://bookoutlet.com" + link_tag['href']
                 price = price_tag.text.strip() if price_tag else "Price N/A"
@@ -45,8 +57,11 @@ def scrape_book_outlet():
                 if book_url not in already_seen:
                     new_books.append({"title": title, "url": book_url, "price": price})
                     already_seen.add(book_url)
-            except Exception:
+            except Exception as e:
+                print(f"[DEBUG] Individual book parsing skip: {e}")
                 continue
+
+        print(f"[DEBUG] New books being sent to Discord: {len(new_books)}")
 
         if new_books:
             save_new_inventory(already_seen)
@@ -59,10 +74,11 @@ def scrape_book_outlet():
                         "fields": [{"name": "Price", "value": item['price'], "inline": True}]
                     }]
                 }
-                requests.post(DISCORD_WEBHOOK_URL, json=payload)
+                res = requests.post(DISCORD_WEBHOOK_URL, json=payload)
+                print(f"[DEBUG] Discord Response: {res.status_code}")
                 
     except Exception as e:
-        print(f"Error: {e}")
+        print(f"[DEBUG] Error details: {e}")
 
 if __name__ == "__main__":
     scrape_book_outlet()
